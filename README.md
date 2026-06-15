@@ -1,4 +1,4 @@
-# Training Assistant
+# Training Assistant 
 
 An AI-powered Q&A tool that lets you upload your own documents and ask questions about them. Built with Next.js, Voyage AI embeddings, and OpenRouter (GPT-4o mini).
 
