@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { parseDocument } from '@/lib/document-parser'
-import { ingestDocument } from '@/lib/rag'
+import { chunkText } from '@/lib/rag'
+import { embedBatch } from '@/lib/voyage'
 
 export const maxDuration = 60
 
-// All formats markitdown supports
 const SUPPORTED_EXTENSIONS = [
-  '.pdf', '.docx', '.doc', '.pptx', '.ppt',
-  '.xlsx', '.xls', '.csv', '.html', '.htm',
-  '.txt', '.md', '.epub',
+  '.docx', '.doc',
+  '.txt', '.md', '.csv',
+  '.html', '.htm',
 ]
 
 export async function POST(request: NextRequest) {
@@ -21,8 +21,7 @@ export async function POST(request: NextRequest) {
     }
 
     const lower = file.name.toLowerCase()
-    const supported = SUPPORTED_EXTENSIONS.some(ext => lower.endsWith(ext))
-    if (!supported) {
+    if (!SUPPORTED_EXTENSIONS.some(ext => lower.endsWith(ext))) {
       return NextResponse.json(
         { error: `Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(', ')}` },
         { status: 400 }
@@ -39,13 +38,26 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const chunkCount = await ingestDocument(file.name, parsed.text)
+    const textChunks = chunkText(parsed.text)
+    if (textChunks.length === 0) {
+      return NextResponse.json({ error: 'Document too short to index' }, { status: 422 })
+    }
+
+    const embeddings = await embedBatch(textChunks.map(c => c.content))
+
+    const chunks = textChunks.map((chunk, i) => ({
+      id: `${file.name}-${chunk.chunkIndex}`,
+      filename: file.name,
+      content: chunk.content,
+      embedding: embeddings[i],
+      chunkIndex: chunk.chunkIndex,
+    }))
 
     return NextResponse.json({
       success: true,
       filename: file.name,
-      chunkCount,
-      characterCount: parsed.text.length,
+      chunkCount: chunks.length,
+      chunks,
     })
   } catch (error) {
     console.error('Upload error:', error)

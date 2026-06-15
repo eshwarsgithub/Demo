@@ -5,9 +5,20 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { MessageBubble } from './MessageBubble'
 import { Send, Loader2 } from 'lucide-react'
+import { cosineSimilarity } from '@/lib/utils'
+import type { StoredChunk } from './UploadZone'
+
+const STORE_KEY = 'ta_store'
+const TOP_K = 5
 
 interface Source {
   filename: string
+  similarity: number
+}
+
+interface ContextChunk {
+  filename: string
+  content: string
   similarity: number
 }
 
@@ -16,6 +27,27 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
+}
+
+function searchChunks(queryEmbedding: number[]): ContextChunk[] {
+  try {
+    const stored: Record<string, StoredChunk[]> = JSON.parse(
+      localStorage.getItem(STORE_KEY) || '{}'
+    )
+    const all: StoredChunk[] = Object.values(stored).flat()
+    if (all.length === 0) return []
+
+    return all
+      .map(chunk => ({
+        filename: chunk.filename,
+        content: chunk.content,
+        similarity: cosineSimilarity(queryEmbedding, chunk.embedding),
+      }))
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, TOP_K)
+  } catch {
+    return []
+  }
 }
 
 export function ChatInterface() {
@@ -43,10 +75,38 @@ export function ChatInterface() {
 
     try {
       const history = messages.map(m => ({ role: m.role, content: m.content }))
+
+      // 1. Embed the query server-side (keeps API key off the client)
+      const embedRes = await fetch('/api/embed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: userMsg.content }),
+      })
+      const { embedding } = await embedRes.json()
+
+      // 2. Search locally against stored chunks
+      const contextChunks = searchChunks(embedding)
+
+      // 3. Show sources immediately in the UI
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === assistantId
+            ? {
+                ...m,
+                sources: contextChunks.map(c => ({
+                  filename: c.filename,
+                  similarity: Math.round(c.similarity * 100),
+                })),
+              }
+            : m
+        )
+      )
+
+      // 4. Stream the answer
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg.content, history }),
+        body: JSON.stringify({ message: userMsg.content, contextChunks, history }),
       })
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -63,11 +123,7 @@ export function ChatInterface() {
           if (!line.startsWith('data: ')) continue
           try {
             const event = JSON.parse(line.slice(6))
-            if (event.type === 'sources') {
-              setMessages(prev =>
-                prev.map(m => (m.id === assistantId ? { ...m, sources: event.sources } : m))
-              )
-            } else if (event.type === 'text') {
+            if (event.type === 'text') {
               setMessages(prev =>
                 prev.map(m =>
                   m.id === assistantId ? { ...m, content: m.content + event.text } : m
@@ -111,7 +167,7 @@ export function ChatInterface() {
                 Ask any question about the uploaded training materials.
               </p>
               <p className="text-muted-foreground text-xs">
-                Go to the Admin panel to upload documents first.
+                Upload a document in the sidebar first.
               </p>
             </div>
           </div>

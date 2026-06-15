@@ -1,17 +1,27 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Upload, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
+const STORE_KEY = 'ta_store'
+
 interface UploadResult {
   filename: string
   chunkCount: number
   status: 'success' | 'error'
   error?: string
+}
+
+export interface StoredChunk {
+  id: string
+  filename: string
+  content: string
+  embedding: number[]
+  chunkIndex: number
 }
 
 export function UploadZone() {
@@ -21,18 +31,50 @@ export function UploadZone() {
   const [results, setResults] = useState<UploadResult[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Load previously indexed docs from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored: Record<string, StoredChunk[]> = JSON.parse(
+        localStorage.getItem(STORE_KEY) || '{}'
+      )
+      const initial: UploadResult[] = Object.entries(stored).map(([filename, chunks]) => ({
+        filename,
+        chunkCount: chunks.length,
+        status: 'success' as const,
+      }))
+      if (initial.length > 0) setResults(initial)
+    } catch {
+      // ignore corrupt storage
+    }
+  }, [])
+
   const processFile = useCallback(async (file: File): Promise<UploadResult> => {
     const formData = new FormData()
     formData.append('file', file)
     const res = await fetch('/api/upload', { method: 'POST', body: formData })
     const data = await res.json()
-    if (!res.ok) return { filename: file.name, chunkCount: 0, status: 'error', error: data.error }
+
+    if (!res.ok) {
+      return { filename: file.name, chunkCount: 0, status: 'error', error: data.error }
+    }
+
+    // Save chunks (with embeddings) to localStorage
+    try {
+      const stored: Record<string, StoredChunk[]> = JSON.parse(
+        localStorage.getItem(STORE_KEY) || '{}'
+      )
+      stored[data.filename] = data.chunks
+      localStorage.setItem(STORE_KEY, JSON.stringify(stored))
+    } catch {
+      // localStorage quota exceeded — still treat as success
+    }
+
     return { filename: file.name, chunkCount: data.chunkCount, status: 'success' }
   }, [])
 
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
-      const SUPPORTED = ['.pdf','.docx','.doc','.pptx','.ppt','.xlsx','.xls','.csv','.html','.htm','.txt','.md','.epub']
+      const SUPPORTED = ['.docx', '.doc', '.txt', '.md', '.csv', '.html', '.htm']
       const fileArray = Array.from(files).filter(
         f => SUPPORTED.some(ext => f.name.toLowerCase().endsWith(ext))
       )
@@ -44,7 +86,11 @@ export function UploadZone() {
         setCurrentFile(file.name)
         newResults.push(await processFile(file))
       }
-      setResults(prev => [...newResults, ...prev])
+      setResults(prev => {
+        // Replace entries for re-uploaded filenames
+        const filenames = new Set(newResults.map(r => r.filename))
+        return [...newResults, ...prev.filter(r => !filenames.has(r.filename))]
+      })
       setCurrentFile(null)
       setIsUploading(false)
     },
@@ -76,9 +122,11 @@ export function UploadZone() {
         <CardContent className="flex flex-col items-center justify-center py-6 text-center">
           <Upload className="h-6 w-6 text-muted-foreground mb-2" />
           <p className="text-xs font-medium mb-1">
-            {isUploading ? `Processing: ${currentFile}` : 'Drop PDF or Word files here'}
+            {isUploading ? `Processing: ${currentFile}` : 'Drop files here'}
           </p>
-          <p className="text-xs text-muted-foreground mb-3">PDF, Word, PPT, Excel, CSV, HTML…</p>
+          <p className="text-xs text-muted-foreground mb-3">
+            Word, TXT, MD, CSV, HTML…
+          </p>
           {isUploading ? (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -102,7 +150,7 @@ export function UploadZone() {
         ref={inputRef}
         type="file"
         className="hidden"
-        accept=".pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.csv,.html,.htm,.txt,.md,.epub"
+        accept=".docx,.doc,.txt,.md,.csv,.html,.htm"
         multiple
         onChange={e => e.target.files && handleFiles(e.target.files)}
       />
@@ -125,7 +173,7 @@ export function UploadZone() {
               {result.status === 'success' ? (
                 <Badge variant="secondary" className="text-xs ml-1 shrink-0">{result.chunkCount}</Badge>
               ) : (
-                <span className="text-xs text-destructive ml-1 shrink-0">failed</span>
+                <span className="text-xs text-destructive ml-1 shrink-0" title={result.error}>failed</span>
               )}
             </div>
           ))}

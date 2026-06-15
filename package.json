@@ -9,13 +9,13 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.104.1",
     "@radix-ui/react-scroll-area": "^1.2.11",
     "@radix-ui/react-separator": "^1.1.9",
     "@radix-ui/react-slot": "^1.2.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.18.0",
+    "mammoth": "^1.12.0",
     "next": "14.2.35",
     "react": "^18",
     "react-dom": "^18",

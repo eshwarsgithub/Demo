@@ -1,10 +1,4 @@
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-import { writeFile, unlink, mkdir } from 'fs/promises'
-import { tmpdir } from 'os'
-import { join } from 'path'
-
-const execAsync = promisify(execFile)
+import mammoth from 'mammoth'
 
 export interface ParsedDocument {
   text: string
@@ -14,24 +8,20 @@ export async function parseDocument(
   buffer: Buffer,
   filename: string
 ): Promise<ParsedDocument> {
-  const tempDir = join(tmpdir(), `markitdown-${Date.now()}`)
-  const tempPath = join(tempDir, filename)
+  const lower = filename.toLowerCase()
 
-  await mkdir(tempDir, { recursive: true })
-
-  try {
-    await writeFile(tempPath, buffer)
-
-    const { stdout } = await execAsync('python', ['-m', 'markitdown', tempPath], {
-      maxBuffer: 50 * 1024 * 1024, // 50 MB output cap
-    })
-
-    const text = stdout.trim()
-    if (!text) throw new Error('markitdown returned empty output')
-
-    return { text }
-  } finally {
-    await unlink(tempPath).catch(() => {})
-    await unlink(tempDir).catch(() => {})
+  if (lower.endsWith('.docx') || lower.endsWith('.doc')) {
+    const result = await mammoth.extractRawText({ buffer })
+    if (!result.value) throw new Error('mammoth returned empty text')
+    return { text: result.value }
   }
+
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+    const html = buffer.toString('utf-8')
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    return { text }
+  }
+
+  // txt, md, csv — plain UTF-8
+  return { text: buffer.toString('utf-8') }
 }

@@ -1,6 +1,4 @@
 import { NextRequest } from 'next/server'
-import { embedQuery } from '@/lib/voyage'
-import { searchChunks } from '@/lib/vector-store'
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const MODEL = 'openai/gpt-4o-mini'
@@ -15,11 +13,18 @@ Guidelines:
 - Keep answers focused and conversational. Use short paragraphs. Bullet points are fine when listing things, but don't over-structure every reply.
 - A little warmth goes a long way — it's okay to acknowledge a good question or offer to dig deeper.`
 
+interface ContextChunk {
+  filename: string
+  content: string
+  similarity: number
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { message, history = [] } = body as {
+    const { message, contextChunks = [], history = [] } = body as {
       message: string
+      contextChunks: ContextChunk[]
       history: Array<{ role: 'user' | 'assistant'; content: string }>
     }
 
@@ -30,13 +35,10 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const queryEmbedding = await embedQuery(message)
-    const chunks = searchChunks(queryEmbedding, 5, 0)
-
     const contextText =
-      chunks.length === 0
+      contextChunks.length === 0
         ? 'No relevant training materials found.'
-        : chunks
+        : contextChunks
             .map(c => `--- Source: ${c.filename} ---\n${c.content}`)
             .join('\n\n')
 
@@ -69,19 +71,6 @@ export async function POST(request: NextRequest) {
     const readable = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder()
-
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              type: 'sources',
-              sources: chunks.map(c => ({
-                filename: c.filename,
-                similarity: Math.round(c.similarity * 100),
-              })),
-            })}\n\n`
-          )
-        )
-
         try {
           const reader = upstream.body!.getReader()
           const decoder = new TextDecoder()
